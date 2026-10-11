@@ -38,7 +38,7 @@ If a game runs as administrator, run the companion as administrator too, or Wind
 **Easiest: let GitHub build it.** Put this folder in a GitHub repository and push. The included workflow
 (`.github/workflows/build-apk.yml`) builds the app; open the **Actions** tab, click the latest run, and
 download the **PadForge** artifact. Install `PadForge.apk` on your phone (allow "install unknown apps"
-when asked). Pushing a tag like `v1.0` also attaches the APK to a GitHub Release.
+when asked). Every push to `main` also refreshes a **latest** release on the Releases page with `PadForge.apk` and the PC companion zip attached.
 
 **Or with Android Studio:** open the `android` folder, wait for Gradle sync, then Run, or
 *Build ▸ Build APK(s)*.
