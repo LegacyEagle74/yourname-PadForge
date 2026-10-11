@@ -17,6 +17,23 @@ class Store(private val context: Context) {
         get() = prefs.getInt("port", 47800)
         set(v) = prefs.edit().putInt("port", v).apply()
 
+    /** Pairing code shown by the PC companion, stored without dashes. */
+    var pairingCode: String
+        get() = prefs.getString("code", "") ?: ""
+        set(v) = prefs.edit().putString("code", normalizeCode(v)).apply()
+
+    /** Corner the overlay handle was last dragged to (fractions of the screen). */
+    var handleX: Float
+        get() = prefs.getFloat("handleX", 0.5f)
+        set(v) = prefs.edit().putFloat("handleX", v).apply()
+    var handleY: Float
+        get() = prefs.getFloat("handleY", 0.02f)
+        set(v) = prefs.edit().putFloat("handleY", v).apply()
+
+    companion object {
+        fun normalizeCode(code: String) = code.uppercase().filter { it.isLetterOrDigit() }
+    }
+
     fun loadAll(): MutableList<Layout> {
         if (!file.exists()) {
             val seeded = Defaults.all()

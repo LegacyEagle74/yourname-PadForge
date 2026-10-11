@@ -5,6 +5,9 @@ import android.app.AlertDialog
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import android.widget.CheckBox
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
@@ -28,6 +31,8 @@ class MainActivity : Activity() {
     private lateinit var store: Store
     private lateinit var hostEdit: EditText
     private lateinit var portEdit: EditText
+    private lateinit var codeEdit: EditText
+    private lateinit var overlayCheck: CheckBox
     private lateinit var findStatus: TextView
     private lateinit var list: ListView
     private var layouts = mutableListOf<Layout>()
@@ -85,6 +90,15 @@ class MainActivity : Activity() {
         addrRow.addView(portEdit, LinearLayout.LayoutParams(px(84), ViewGroup.LayoutParams.WRAP_CONTENT))
         root.addView(addrRow)
 
+        codeEdit = EditText(this).apply {
+            hint = "Pairing code (shown on your PC)"
+            isSingleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or
+                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+            setText(store.pairingCode)
+        }
+        root.addView(codeEdit)
+
         val findRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -101,6 +115,16 @@ class MainActivity : Activity() {
         }
         findRow.addView(findStatus, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(findRow)
+
+        overlayCheck = CheckBox(this).apply {
+            text = "Parsec mode: show controls on top of Parsec"
+            isChecked = getSharedPreferences("padforge", MODE_PRIVATE).getBoolean("overlayMode", false)
+            setOnCheckedChangeListener { _, on ->
+                getSharedPreferences("padforge", MODE_PRIVATE).edit().putBoolean("overlayMode", on).apply()
+            }
+            setPadding(px(4), px(8), 0, 0)
+        }
+        root.addView(overlayCheck)
 
         val headRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -123,12 +147,15 @@ class MainActivity : Activity() {
         root.addView(headRow)
 
         list = ListView(this)
-        list.setOnItemClickListener { _, _, pos, _ -> play(layouts[pos], edit = false) }
+        list.setOnItemClickListener { _, _, pos, _ ->
+            if (overlayCheck.isChecked) playOverlay(layouts[pos]) else play(layouts[pos], edit = false)
+        }
         list.setOnItemLongClickListener { _, _, pos, _ -> layoutMenu(layouts[pos]); true }
         root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         root.addView(TextView(this).apply {
-            text = "Tap a layout to play. Long-press it to edit, rename, copy, share or delete."
+            text = "Tap a layout to play. Long-press it to edit, rename, copy, share or delete. " +
+                "In Parsec mode, tap the small floating button to hide/show controls and long-press it to stop."
             textSize = 12f
             setTextColor(0x88FFFFFF.toInt())
             setPadding(0, px(6), 0, 0)
@@ -150,6 +177,7 @@ class MainActivity : Activity() {
     private fun saveAddress() {
         store.host = hostEdit.text.toString()
         store.port = portEdit.text.toString().toIntOrNull()?.takeIf { it in 1..65535 } ?: 47800
+        store.pairingCode = codeEdit.text.toString()
     }
 
     private fun refresh() {
@@ -178,15 +206,61 @@ class MainActivity : Activity() {
         return parts.joinToString(" · ").ifEmpty { "Empty" }
     }
 
+    /** Checks the address and pairing code are filled in; explains what's missing if not. */
+    private fun readyToConnect(): Boolean {
+        saveAddress()
+        val missing = when {
+            store.host.isBlank() -> "Set your PC's address first (or tap Find PC)"
+            store.pairingCode.isBlank() -> "Enter the pairing code shown in the PadForge window on your PC"
+            else -> return true
+        }
+        Toast.makeText(this, missing, Toast.LENGTH_LONG).show()
+        return false
+    }
+
     private fun play(l: Layout, edit: Boolean) {
         saveAddress()
-        if (!edit && store.host.isBlank()) {
-            Toast.makeText(this, "Set your PC's address first (or tap Find PC)", Toast.LENGTH_LONG).show()
-            return
-        }
+        if (!edit && !readyToConnect()) return
         startActivity(Intent(this, PadActivity::class.java)
             .putExtra(PadActivity.EXTRA_LAYOUT, l.id)
             .putExtra(PadActivity.EXTRA_EDIT, edit))
+    }
+
+    /** Starts the floating controls and switches to Parsec. */
+    private fun playOverlay(l: Layout) {
+        if (!readyToConnect()) return
+        if (!OverlayService.canDraw(this)) {
+            AlertDialog.Builder(this, Dialogs.theme())
+                .setTitle("Allow drawing over other apps")
+                .setMessage("To show your controls on top of Parsec, Android needs you to turn on " +
+                    "\"Display over other apps\" for PadForge. Then come back and tap the layout again.")
+                .setPositiveButton("Open settings") { _, _ ->
+                    try {
+                        startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                    } catch (e: Exception) {
+                        startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+                    }
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED &&
+            !getSharedPreferences("padforge", MODE_PRIVATE).getBoolean("askedNotif", false)) {
+            // Optional: the notification holds the Hide / Edit / Stop buttons.
+            getSharedPreferences("padforge", MODE_PRIVATE).edit().putBoolean("askedNotif", true).apply()
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
+        OverlayService.start(this, l.id)
+        val parsec = packageManager.getLaunchIntentForPackage(OverlayService.PARSEC_PACKAGE)
+        if (parsec != null) {
+            startActivity(parsec)
+        } else {
+            Toast.makeText(this, "Overlay is on. Open Parsec (or any app) and your controls will be on top.",
+                Toast.LENGTH_LONG).show()
+            moveTaskToBack(true)
+        }
     }
 
     private fun findPc() {
@@ -233,23 +307,25 @@ class MainActivity : Activity() {
     private fun layoutMenu(l: Layout) {
         AlertDialog.Builder(this, Dialogs.theme())
             .setTitle(l.name)
-            .setItems(arrayOf("Play", "Edit", "Rename", "Duplicate", "Share / export", "Delete")) { _, which ->
+            .setItems(arrayOf("Play full screen", "Play over Parsec (overlay)", "Edit", "Rename", "Duplicate",
+                "Share / export", "Delete")) { _, which ->
                 when (which) {
                     0 -> play(l, edit = false)
-                    1 -> play(l, edit = true)
-                    2 -> Dialogs.askText(this, "Rename", l.name) { n ->
+                    1 -> playOverlay(l)
+                    2 -> play(l, edit = true)
+                    3 -> Dialogs.askText(this, "Rename", l.name) { n ->
                         if (n.isNotEmpty()) { l.name = n; store.put(l); refresh() }
                     }
-                    3 -> {
+                    4 -> {
                         val c = l.copy().apply { id = Element.newId(); name = "${l.name} copy" }
                         store.put(c); refresh()
                     }
-                    4 -> startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                    5 -> startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
                         putExtra(Intent.EXTRA_SUBJECT, "PadForge layout: ${l.name}")
                         putExtra(Intent.EXTRA_TEXT, l.toJson().toString(2))
                     }, "Share layout"))
-                    5 -> AlertDialog.Builder(this, Dialogs.theme())
+                    6 -> AlertDialog.Builder(this, Dialogs.theme())
                         .setMessage("Delete \"${l.name}\"?")
                         .setPositiveButton("Delete") { _, _ ->
                             store.saveAll(store.loadAll().filter { it.id != l.id })

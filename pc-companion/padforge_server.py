@@ -8,8 +8,13 @@ into real keyboard, mouse and Xbox 360 controller input on this PC.
   python padforge_server.py              # normal mode (Windows)
   python padforge_server.py --dry-run    # just print what would be pressed (any OS)
 
+  python padforge_server.py --show-code  # print the pairing code and exit
+  python padforge_server.py --new-code   # make a new pairing code (old phones must re-enter it)
+
 Protocol (TCP, one UTF-8 text line per event, default port 47800):
-  HELLO <version>            -> server answers "WELCOME <version> <hostname> <gamepad 0|1>"
+  HELLO <version> <code>     -> "WELCOME <version> <hostname> <gamepad 0|1>", or "DENIED <reason>"
+                                and the connection is closed. Nothing else is accepted
+                                until the pairing code has been checked.
   PING <token>               -> server answers "PONG <token>"
   K  <KeyName> <0|1>         keyboard key up/down       (e.g. "K W 1")
   MB <Left|Right|Middle|X1|X2> <0|1>   mouse button
@@ -24,18 +29,35 @@ Protocol (TCP, one UTF-8 text line per event, default port 47800):
 Discovery: the phone broadcasts "PADFORGE_DISCOVER" over UDP to port 47801 and
 this server answers "PADFORGE_SERVER <tcp-port> <hostname>".
 
+Pairing: the companion keeps a random pairing code in padforge_config.json next
+to this script. A phone must send it before any input is accepted, so nobody
+else who can reach the port can type on this PC.
+
+Remote use (e.g. with Parsec while away): put the PC and phone on the same
+Tailscale network and connect to the PC's Tailscale address (100.x.y.z). Don't
+forward this port on your router: the protocol itself is not encrypted.
+
 Safety: everything a phone is holding is released when it disconnects, so a
 dropped Wi-Fi connection never leaves a key stuck down.
 """
 
 import argparse
 import collections
+import hmac
+import ipaddress
+import json
+import os
+import secrets
 import socket
 import sys
 import threading
 import time
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
+HERE = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(HERE, "padforge_config.json")
+CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no 0/O or 1/I
+TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")
 DEFAULT_PORT = 47800
 DISCOVERY_PORT = 47801
 
@@ -259,6 +281,44 @@ class DryRunPad:
 
 
 # --------------------------------------------------------------------------
+# Pairing code
+# --------------------------------------------------------------------------
+def normalize_code(code):
+    """Pairing codes are compared without dashes/spaces and case-insensitively."""
+    return "".join(ch for ch in code.upper() if ch.isalnum())
+
+
+def format_code(code):
+    c = normalize_code(code)
+    return "-".join(c[i:i + 4] for i in range(0, len(c), 4))
+
+
+def load_config():
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_config(cfg):
+    tmp = CONFIG_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+    os.replace(tmp, CONFIG_PATH)
+
+
+def get_pairing_code(regenerate=False):
+    cfg = load_config()
+    code = normalize_code(cfg.get("pairing_code", ""))
+    if regenerate or len(code) < 8:
+        code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(8))
+        cfg["pairing_code"] = code
+        save_config(cfg)
+    return code
+
+
+# --------------------------------------------------------------------------
 # Shared keyboard/mouse state with reference counting, so two on-screen
 # buttons bound to the same key (or two phones) don't release each other.
 # --------------------------------------------------------------------------
@@ -299,10 +359,13 @@ class Output:
 
 
 class Session(threading.Thread):
-    def __init__(self, conn, addr, output, pad_factory, verbose):
+    def __init__(self, conn, addr, output, pad_factory, verbose, code):
         super().__init__(daemon=True)
         self.conn, self.addr = conn, addr
         self.output, self.pad_factory, self.verbose = output, pad_factory, verbose
+        self.code = code            # None = pairing disabled
+        self.authed = code is None
+        self.denied = False
         self.held = collections.Counter()   # (kind, name) -> how many presses this phone holds
         self.pad = None
         self.pad_failed = False
@@ -321,14 +384,19 @@ class Session(threading.Thread):
                 if not data:
                     break
                 buf += data
-                while b"\n" in buf:
+                if not self.authed and len(buf) > 512:
+                    break  # someone is sending junk without pairing
+                while b"\n" in buf and not self.denied:
                     line, buf = buf.split(b"\n", 1)
                     line = line.decode("utf-8", "replace").strip()
                     if line:
                         try:
                             self.handle(line)
                         except Exception as e:
-                            self.log("bad message %r: %s" % (line, e))
+                            self.log("bad message %r: %s" % (line if self.authed else line.split()[0], e))
+                if self.denied:
+                    time.sleep(1.0)  # slow down code guessing
+                    break
         except (OSError, socket.timeout) as e:
             self.log("connection lost (%s)" % e)
         finally:
@@ -340,7 +408,8 @@ class Session(threading.Thread):
                 self.conn.close()
             except OSError:
                 pass
-            self.log("disconnected, everything released")
+            if self.authed:
+                self.log("disconnected, everything released")
 
     def reply(self, text):
         try:
@@ -385,13 +454,25 @@ class Session(threading.Thread):
     def handle(self, line):
         p = line.split()
         cmd = p[0]
-        if self.verbose and cmd not in ("PING", "MM", "GS"):
+        if self.verbose and self.authed and cmd not in ("PING", "MM", "GS", "HELLO"):
             self.log(line)
         if cmd == "PING":
             self.reply("PONG " + (p[1] if len(p) > 1 else ""))
         elif cmd == "HELLO":
+            given = normalize_code(p[2]) if len(p) > 2 else ""
+            if self.code is not None and not hmac.compare_digest(given.encode(), self.code.encode()):
+                reason = "old-app" if len(p) < 3 else "wrong-code"
+                self.reply("DENIED " + reason)
+                self.log("rejected: %s" % ("app too old, update PadForge" if reason == "old-app" else "wrong pairing code"))
+                self.denied = True
+                return
+            if not self.authed:
+                self.authed = True
+                self.log("paired")
             has_pad = 1 if self.pad_factory is not None else 0
             self.reply("WELCOME %d %s %d" % (PROTOCOL_VERSION, socket.gethostname().replace(" ", "_"), has_pad))
+        elif not self.authed:
+            raise ValueError("not paired yet")
         elif cmd == "K":
             if p[1] not in KEYS:
                 raise ValueError("unknown key")
@@ -449,6 +530,15 @@ def discovery_loop(tcp_port, stop):
             s.sendto(("PADFORGE_SERVER %d %s" % (tcp_port, name)).encode(), addr)
 
 
+def describe_ip(ip):
+    try:
+        if ipaddress.ip_address(ip) in TAILSCALE_NET:
+            return "Tailscale: use this one when you're away from home"
+    except ValueError:
+        pass
+    return "home network"
+
+
 def local_ips():
     ips = set()
     try:
@@ -472,7 +562,24 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="print events instead of pressing anything")
     ap.add_argument("--no-gamepad", action="store_true", help="don't create a virtual Xbox controller")
     ap.add_argument("--verbose", "-v", action="store_true", help="log every button event")
+    ap.add_argument("--show-code", action="store_true", help="print the pairing code and exit")
+    ap.add_argument("--new-code", action="store_true", help="generate a new pairing code")
+    ap.add_argument("--no-pairing", action="store_true",
+                    help="accept any phone without a pairing code (only on a network you fully trust)")
     args = ap.parse_args()
+
+    # Started without a console (pythonw, e.g. from the start-at-logon task): log to a file.
+    if sys.stdout is None or sys.stderr is None:
+        log = open(os.path.join(HERE, "padforge.log"), "a", buffering=1, encoding="utf-8")
+        sys.stdout = sys.stderr = log
+        print("\n===== %s =====" % time.strftime("%Y-%m-%d %H:%M:%S"))
+
+    code = get_pairing_code(regenerate=args.new_code)
+    if args.show_code:
+        print("Pairing code: %s" % format_code(code))
+        return
+    if args.no_pairing:
+        code = None
 
     if args.dry_run or sys.platform != "win32":
         if not args.dry_run:
@@ -497,8 +604,10 @@ def main():
     print("  keyboard/mouse : %s" % backend.name)
     print("  gamepad        : %s" % ("virtual Xbox 360 controller" if pad_factory else "off"))
     print("  listening on   : port %d" % args.port)
+    print("  pairing code   : %s" % (format_code(code) if code else "OFF (any phone can connect)"))
     for ip in local_ips():
-        print("  PC address     : %s   <- tap 'Find PC' in the app, or type this in" % ip)
+        print("  PC address     : %-15s (%s)" % (ip, describe_ip(ip)))
+    print("In the app: tap 'Find PC' at home, or type an address above, then enter the pairing code.")
     print("Press Ctrl+C to quit.\n")
 
     srv.settimeout(1.0)
@@ -508,7 +617,7 @@ def main():
                 conn, addr = srv.accept()
             except socket.timeout:
                 continue
-            Session(conn, addr, output, pad_factory, args.verbose).start()
+            Session(conn, addr, output, pad_factory, args.verbose, code).start()
     except KeyboardInterrupt:
         print("\nBye.")
     finally:

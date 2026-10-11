@@ -44,6 +44,8 @@ object Connection {
     private var worker: Thread? = null
     @Volatile private var socket: Socket? = null
     @Volatile private var generation = 0
+    @Volatile private var denied = false
+    @Volatile private var welcomed = false
 
     // Coalesced state (guarded by lock).
     private var accX = 0f
@@ -56,15 +58,23 @@ object Connection {
     private class StickToken(val index: Int)
     private val stickTokens = arrayOf(StickToken(0), StickToken(1))
 
-    fun start(host: String, port: Int) {
+    /** Convenience: connect using the address and pairing code saved in settings. */
+    fun start(store: Store) = start(store.host, store.port, store.pairingCode)
+
+    fun start(host: String, port: Int, code: String) {
         stop()
         if (host.isBlank()) {
             lastError = "No PC address set"
             notifyListener()
             return
         }
+        if (code.isBlank()) {
+            lastError = "Enter the pairing code shown on your PC"
+            notifyListener()
+            return
+        }
         val gen = ++generation
-        worker = Thread({ runLoop(gen, host.trim(), port) }, "padforge-net").apply {
+        worker = Thread({ runLoop(gen, host.trim(), port, Store.normalizeCode(code)) }, "padforge-net").apply {
             isDaemon = true
             start()
         }
@@ -102,17 +112,27 @@ object Connection {
         }
     }
 
-    private fun runLoop(gen: Int, host: String, port: Int) {
+    private fun runLoop(gen: Int, host: String, port: Int, code: String) {
         while (gen == generation) {
             setState(State.CONNECTING)
             val s = Socket()
             try {
                 s.tcpNoDelay = true
-                s.connect(InetSocketAddress(host, port), 3000)
+                denied = false
+                welcomed = false
+                // Generous timeout: over Tailscale the first packet may need a moment to find a route.
+                s.connect(InetSocketAddress(host, port), 6000)
                 socket = s
                 val out = BufferedOutputStream(s.getOutputStream())
-                out.write("HELLO 1\n".toByteArray()); out.flush()
+                out.write("HELLO 2 $code\n".toByteArray()); out.flush()
                 startReader(s, gen)
+                // Wait for the PC to accept the pairing code before reporting "connected".
+                val deadline = System.currentTimeMillis() + 6000
+                while (!welcomed && !denied && gen == generation && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(20)
+                }
+                if (denied) throw java.io.IOException("denied")
+                if (!welcomed) throw SocketTimeoutException()
                 synchronized(lock) {
                     queue.clear(); accX = 0f; accY = 0f; mousePending = false
                     stickPending[0] = false; stickPending[1] = false
@@ -135,9 +155,15 @@ object Connection {
                 break
             } catch (e: Exception) {
                 if (gen != generation) break
-                lastError = when (e) {
+                if (!denied) lastError = when (e) {
                     is SocketTimeoutException -> "PC not answering at $host:$port"
                     else -> e.message ?: e.javaClass.simpleName
+                }
+                if (denied) {
+                    // Retrying with the same wrong code would just be refused again.
+                    generation++
+                    setState(State.OFF)
+                    return
                 }
             } finally {
                 try { s.close() } catch (_: Exception) {}
@@ -177,7 +203,12 @@ object Connection {
                     val line = r.readLine() ?: break
                     val p = line.trim().split(" ")
                     when (p[0]) {
-                        "WELCOME" -> { serverName = p.getOrElse(2) { "PC" }; notifyListener() }
+                        "WELCOME" -> { serverName = p.getOrElse(2) { "PC" }; welcomed = true; notifyListener() }
+                        "DENIED" -> {
+                            denied = true
+                            lastError = if (p.getOrNull(1) == "old-app") "Update the PC companion"
+                                else "Wrong pairing code (check the PC companion window)"
+                        }
                         "PONG" -> p.getOrNull(1)?.toLongOrNull()?.let {
                             latencyMs = System.currentTimeMillis() - it
                             notifyListener()

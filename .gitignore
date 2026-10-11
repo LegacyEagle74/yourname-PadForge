@@ -1,2 +1,4 @@
 __pycache__/
 *.pyc
+padforge_config.json
+padforge.log

@@ -34,6 +34,19 @@ class PadView(context: Context) : View(context) {
     var selected: Element? = null
         set(v) { field = v; onSelectionChanged?.invoke(v); invalidate() }
 
+    /**
+     * Overlay mode: this view is a small window showing part of the screen. Layout
+     * coordinates are still fractions of the whole screen (screenW x screenH), and
+     * (originX, originY) is where this view's top-left corner sits on that screen.
+     */
+    var screenW = 0f
+    var screenH = 0f
+    var originX = 0f
+    var originY = 0f
+
+    /** Overlay mode: no black background, so the app underneath shows through. */
+    var transparent = false
+
     var onSelectionChanged: ((Element?) -> Unit)? = null
     var onEditElement: ((Element) -> Unit)? = null
     var onLayoutChanged: (() -> Unit)? = null
@@ -60,9 +73,11 @@ class PadView(context: Context) : View(context) {
     private val owners = HashMap<Int, Element>()
 
     // ---------------------------------------------------------------- geometry
-    private val shortSide get() = min(width, height).toFloat().coerceAtLeast(1f)
-    private fun cx(e: Element) = e.x * width
-    private fun cy(e: Element) = e.y * height
+    private val sw get() = if (screenW > 0f) screenW else width.toFloat()
+    private val sh get() = if (screenH > 0f) screenH else height.toFloat()
+    private val shortSide get() = min(sw, sh).coerceAtLeast(1f)
+    private fun cx(e: Element) = e.x * sw - originX
+    private fun cy(e: Element) = e.y * sh - originY
     private fun halfW(e: Element) = e.w * shortSide / 2f
     private fun halfH(e: Element) = (if (e.isRound) e.w else e.h) * shortSide / 2f
 
@@ -348,8 +363,8 @@ class PadView(context: Context) : View(context) {
                     val grid = 8 * dp
                     val nx = ((x - dragOffX) / grid).roundToInt() * grid
                     val ny = ((y - dragOffY) / grid).roundToInt() * grid
-                    e.x = (nx / width).coerceIn(0f, 1f)
-                    e.y = (ny / height).coerceIn(0f, 1f)
+                    e.x = ((nx + originX) / sw).coerceIn(0f, 1f)
+                    e.y = ((ny + originY) / sh).coerceIn(0f, 1f)
                     invalidate()
                 } else if (dragMode == 2) {
                     val hw = max(x - cx(e), 4 * dp)
@@ -392,7 +407,7 @@ class PadView(context: Context) : View(context) {
         Color.argb((a.coerceIn(0f, 1f) * 255).toInt(), Color.red(color), Color.green(color), Color.blue(color))
 
     override fun onDraw(canvas: Canvas) {
-        canvas.drawColor(Color.BLACK)
+        if (!transparent) canvas.drawColor(Color.BLACK)
         if (editMode) {
             val step = 24 * dp
             var gx = 0f
@@ -465,7 +480,7 @@ class PadView(context: Context) : View(context) {
             fill.color = Color.BLACK
             canvas.drawCircle(hx, hy, handleR * 0.35f, fill)
         }
-        if (layout.elements.isEmpty()) {
+        if (layout.elements.isEmpty() && !transparent) {
             text.textSize = 16 * dp
             text.color = 0x99FFFFFF.toInt()
             canvas.drawText(

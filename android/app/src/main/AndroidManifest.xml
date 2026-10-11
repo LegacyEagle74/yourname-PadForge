@@ -4,6 +4,16 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Overlay mode: draw controls on top of Parsec -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Lets PadForge open the Parsec app after starting the overlay (Android 11+ package visibility) -->
+    <queries>
+        <package android:name="tv.parsec.client" />
+    </queries>
 
     <application
         android:allowBackup="true"
@@ -27,5 +37,14 @@
             android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode"
             android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen" />
+
+        <service
+            android:name=".OverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="On-screen game controls drawn over a remote-desktop app, sending input to the user's PC" />
+        </service>
     </application>
 </manifest>

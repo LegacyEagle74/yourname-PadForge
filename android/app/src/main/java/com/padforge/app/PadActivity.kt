@@ -44,6 +44,8 @@ class PadActivity : Activity() {
             }
         }
         store = Store(this)
+        // Full-screen play/edit and the overlay share one connection: only one runs at a time.
+        OverlayService.stop(this)
         layout = store.get(intent.getStringExtra(EXTRA_LAYOUT) ?: "") ?: run { finish(); return }
 
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
@@ -142,7 +144,7 @@ class PadActivity : Activity() {
                 when (which) {
                     0 -> setEditMode(true)
                     1 -> Dialogs.editLayout(this, layout) { pad.invalidate(); save() }
-                    2 -> Connection.start(store.host, store.port)
+                    2 -> Connection.start(store)
                     3 -> finish()
                 }
             }
@@ -201,7 +203,7 @@ class PadActivity : Activity() {
         super.onResume()
         hideSystemBars()
         Connection.listener = { status.text = Connection.statusText() }
-        Connection.start(store.host, store.port)
+        Connection.start(store)
         status.text = Connection.statusText()
     }
 
