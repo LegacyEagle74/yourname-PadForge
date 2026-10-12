@@ -23,7 +23,16 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug assembleRelease --no-daemon
+          set -o pipefail
+          ./gradlew assembleDebug assembleRelease --no-daemon 2>&1 | tee build.log
+
+      # On failure, surface the compiler/Gradle errors as annotations (visible in the run summary).
+      - name: Report build errors
+        if: failure()
+        working-directory: android
+        run: |
+          grep -E "^e: |error:|ERROR|What went wrong|Could not|FAILURE|Execution failed|> " build.log \
+            | grep -v "^> Task" | head -40 | while IFS= read -r line; do echo "::error::${line}"; done
 
       - name: Collect APKs
         run: |
