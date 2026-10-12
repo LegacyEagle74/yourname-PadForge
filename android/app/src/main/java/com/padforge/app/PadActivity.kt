@@ -83,7 +83,7 @@ class PadActivity : Activity() {
         pad.onSelectionChanged = { sel -> selectionButtons.forEach { it.isEnabled = sel != null } }
         pad.onEditElement = { editElement(it) }
         pad.onLayoutChanged = { save() }
-        Connection.listener = { status.text = Connection.statusText() }
+        Output.listener = { status.text = Output.statusText() }
 
         setEditMode(intent.getBooleanExtra(EXTRA_EDIT, false))
     }
@@ -144,7 +144,7 @@ class PadActivity : Activity() {
                 when (which) {
                     0 -> setEditMode(true)
                     1 -> Dialogs.editLayout(this, layout) { pad.invalidate(); save() }
-                    2 -> Connection.start(store)
+                    2 -> if (!store.phoneMode) Output.start(this, store)
                     3 -> finish()
                 }
             }
@@ -202,20 +202,25 @@ class PadActivity : Activity() {
     override fun onResume() {
         super.onResume()
         hideSystemBars()
-        Connection.listener = { status.text = Connection.statusText() }
-        Connection.start(store)
-        status.text = Connection.statusText()
+        Output.listener = { status.text = Output.statusText() }
+        if (store.phoneMode) {
+            // Phone mode sends input to the app underneath the overlay; full screen there's nothing to control.
+            status.text = "Phone mode: use this layout as an overlay (tap it on the home screen)"
+        } else {
+            Output.start(this, store)
+            status.text = Output.statusText()
+        }
     }
 
     override fun onPause() {
         pad.releaseAll()
-        Connection.stop()
+        Output.stop()
         if (pad.editMode) save()
         super.onPause()
     }
 
     override fun onDestroy() {
-        if (::pad.isInitialized) Connection.listener = null
+        if (::pad.isInitialized) Output.listener = null
         super.onDestroy()
     }
 

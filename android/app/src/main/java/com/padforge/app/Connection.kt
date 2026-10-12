@@ -368,28 +368,3 @@ object Connection {
         return found.values.toList()
     }
 }
-
-/** Turns bindings into protocol lines. */
-object Output {
-    fun press(b: Binding) {
-        when (b.kind) {
-            BindKind.KEY -> Connection.send("K ${b.code} 1")
-            BindKind.MOUSE -> Connection.send("MB ${b.code} 1")
-            BindKind.WHEEL -> Connection.send(when (b.code) {
-                "Up" -> "MW 1"; "Down" -> "MW -1"; "Left" -> "MH -1"; else -> "MH 1"
-            })
-            BindKind.PAD -> Connection.send("GB ${b.code} 1")
-            BindKind.TRIGGER -> Connection.send("GT ${b.code[0]} 1")
-        }
-    }
-
-    fun release(b: Binding) {
-        when (b.kind) {
-            BindKind.KEY -> Connection.send("K ${b.code} 0")
-            BindKind.MOUSE -> Connection.send("MB ${b.code} 0")
-            BindKind.WHEEL -> {}
-            BindKind.PAD -> Connection.send("GB ${b.code} 0")
-            BindKind.TRIGGER -> Connection.send("GT ${b.code[0]} 0")
-        }
-    }
-}

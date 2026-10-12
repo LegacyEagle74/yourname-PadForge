@@ -38,6 +38,12 @@ android {
     }
 }
 
+dependencies {
+    // Phone mode: Shizuku lets PadForge inject key/mouse events into other apps without root.
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
+}
+
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)

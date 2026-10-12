@@ -25,6 +25,16 @@ class Store(private val context: Context) {
         get() = prefs.getString("remoteHost", "") ?: ""
         set(v) = prefs.edit().putString("remoteHost", v.trim()).apply()
 
+    /** True = send input into apps on this phone via Shizuku; false = to the PC companion. */
+    var phoneMode: Boolean
+        get() = prefs.getBoolean("phoneMode", false)
+        set(v) = prefs.edit().putBoolean("phoneMode", v).apply()
+
+    /** Phone mode mouse: 0 = auto (follow Parsec), 1 = game/relative, 2 = visible pointer. */
+    var mouseMode: Int
+        get() = prefs.getInt("mouseMode", 0)
+        set(v) = prefs.edit().putInt("mouseMode", v).apply()
+
     /** Pairing code shown by the PC companion, stored without dashes. */
     var pairingCode: String
         get() = prefs.getString("code", "") ?: ""

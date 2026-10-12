@@ -102,8 +102,8 @@ class OverlayService : Service() {
                 layout = l
                 hidden = false
                 buildWindows()
-                Connection.listener = connectionListener
-                Connection.start(store)
+                Output.listener = connectionListener
+                Output.start(this, store)
                 updateNotification()
             }
             ACTION_TOGGLE -> setHidden(!hidden)
@@ -115,9 +115,9 @@ class OverlayService : Service() {
     override fun onDestroy() {
         removeWindows()
         // If the full-screen pad has already taken over the connection, leave it alone.
-        if (Connection.listener === connectionListener) {
-            Connection.listener = null
-            Connection.stop()
+        if (Output.listener === connectionListener) {
+            Output.listener = null
+            Output.stop()
         }
         running = false
         super.onDestroy()
@@ -261,8 +261,8 @@ class OverlayService : Service() {
         handle?.invalidate()
         // Refresh the notification when the state changes, and every 10 s for the latency.
         val now = System.currentTimeMillis()
-        if (Connection.state != lastState || now - lastNotified > 10_000) {
-            lastState = Connection.state
+        if (Output.state != lastState || now - lastNotified > 10_000) {
+            lastState = Output.state
             lastNotified = now
             updateNotification()
         }
@@ -305,7 +305,7 @@ class OverlayService : Service() {
         @Suppress("DEPRECATION")
         return b.setSmallIcon(R.drawable.ic_stat_pad)
             .setContentTitle("PadForge overlay: ${layout?.name ?: ""}")
-            .setContentText(Connection.statusText() + if (hidden) " · controls hidden" else "")
+            .setContentText(Output.statusText() + if (hidden) " · controls hidden" else "")
             .setOngoing(true)
             .setContentIntent(open)
             .addAction(Notification.Action.Builder(null, if (hidden) "Show controls" else "Hide controls",
@@ -352,7 +352,7 @@ class OverlayService : Service() {
             c.drawCircle(r, r - d, br, paint); c.drawCircle(r, r + d, br, paint)
             c.drawCircle(r - d, r, br, paint); c.drawCircle(r + d, r, br, paint)
             paint.style = Paint.Style.FILL
-            paint.color = when (Connection.state) {
+            paint.color = when (Output.state) {
                 Connection.State.CONNECTED -> 0xFF66BB6A.toInt()
                 Connection.State.CONNECTING -> 0xFFFFCA28.toInt()
                 Connection.State.OFF -> 0xFFEF5350.toInt()
@@ -389,9 +389,9 @@ class OverlayService : Service() {
                     if (dragging) {
                         store.handleX = (lp.x + width / 2f) / screenW
                         store.handleY = lp.y.toFloat() / screenH
-                    } else if (Connection.state != Connection.State.CONNECTED) {
-                        Toast.makeText(context, Connection.statusText(), Toast.LENGTH_LONG).show()
-                        if (Connection.state == Connection.State.OFF) Connection.start(store)
+                    } else if (Output.state != Connection.State.CONNECTED) {
+                        Toast.makeText(context, Output.statusText(), Toast.LENGTH_LONG).show()
+                        if (Output.state == Connection.State.OFF) Output.start(context, store)
                     } else {
                         performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                         setHidden(!hidden)

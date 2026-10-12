@@ -170,7 +170,7 @@ class PadView(context: Context) : View(context) {
                 r.lastX = x; r.lastY = y
                 r.travel += hypot(dx, dy)
                 val k = 3f * e.sensitivity / dp   // ~3 PC pixels per dp of finger travel at 1x
-                Connection.mouseMove(dx * k, dy * k)
+                Output.mouseMove(dx * k, dy * k)
             }
         }
     }
@@ -218,8 +218,8 @@ class PadView(context: Context) : View(context) {
     private fun applyStick(e: Element, r: Rt, sx: Float, sy: Float, raw: Float) {
         r.sx = sx; r.sy = sy
         when (e.stickMode) {
-            StickMode.PAD_LEFT -> Connection.stick(0, sx, -sy)
-            StickMode.PAD_RIGHT -> Connection.stick(1, sx, -sy)
+            StickMode.PAD_LEFT -> Output.stick(0, sx, -sy)
+            StickMode.PAD_RIGHT -> Output.stick(1, sx, -sy)
             StickMode.MOUSE -> {}   // handled by the frame ticker
             StickMode.DIRECTIONAL -> {
                 val mag = hypot(sx, sy)
@@ -259,7 +259,7 @@ class PadView(context: Context) : View(context) {
                 active = true
                 val mag = hypot(r.sx, r.sy)         // squared response: fine aim near the centre
                 val speed = 1500f * e.sensitivity * mag * dt
-                Connection.mouseMove(r.sx * speed, r.sy * speed)
+                Output.mouseMove(r.sx * speed, r.sy * speed)
             }
             if (active && !editMode) choreographer.postFrameCallback(this)
             else { ticking = false; lastFrame = 0L }
@@ -281,8 +281,8 @@ class PadView(context: Context) : View(context) {
             if (e.type == ElementType.JOYSTICK) {
                 if (r.edgeOn) e.bindings.forEach(Output::release)
                 for (d in 0..3) if (r.dirOn[d]) e.dirs[d]?.let(Output::release)
-                if (e.stickMode == StickMode.PAD_LEFT) Connection.stick(0, 0f, 0f)
-                if (e.stickMode == StickMode.PAD_RIGHT) Connection.stick(1, 0f, 0f)
+                if (e.stickMode == StickMode.PAD_LEFT) Output.stick(0, 0f, 0f)
+                if (e.stickMode == StickMode.PAD_RIGHT) Output.stick(1, 0f, 0f)
             }
         }
         rt.clear()

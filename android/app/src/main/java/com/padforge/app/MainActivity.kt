@@ -8,6 +8,10 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import android.widget.CheckBox
+import android.widget.RadioButton
+import android.widget.RadioGroup
+import android.view.View
+import rikka.shizuku.Shizuku
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
@@ -38,6 +42,12 @@ class MainActivity : Activity() {
     private lateinit var overlayCheck: CheckBox
     private lateinit var findStatus: TextView
     private lateinit var list: ListView
+    private lateinit var pcBox: LinearLayout
+    private lateinit var phoneBox: LinearLayout
+    private lateinit var shizukuStatus: TextView
+    private lateinit var shizukuButton: Button
+    private val shizukuChanged = Shizuku.OnBinderReceivedListener { runOnUiThread { updateModeUi() } }
+    private val shizukuGone = Shizuku.OnBinderDeadListener { runOnUiThread { updateModeUi() } }
     private var layouts = mutableListOf<Layout>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -73,9 +83,31 @@ class MainActivity : Activity() {
             setTextColor(0x99FFFFFF.toInt())
         })
 
+        // ---- where input goes
+        root.addView(TextView(this).apply {
+            text = "Send input to"
+            textSize = 13f
+            setTextColor(0xFF80CBC4.toInt())
+            setPadding(0, px(14), 0, 0)
+        })
+        val modeGroup = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
+        val pcRadio = RadioButton(this).apply { id = View.generateViewId(); text = "My PC (PadForge companion over Wi-Fi / Tailscale)" }
+        val phoneRadio = RadioButton(this).apply { id = View.generateViewId(); text = "This phone: keyboard & mouse into the app underneath (Shizuku)" }
+        modeGroup.addView(pcRadio); modeGroup.addView(phoneRadio)
+        modeGroup.check(if (store.phoneMode) phoneRadio.id else pcRadio.id)
+        modeGroup.setOnCheckedChangeListener { _, id ->
+            stopTest()
+            store.phoneMode = id == phoneRadio.id
+            updateModeUi()
+        }
+        root.addView(modeGroup)
+
+        pcBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(pcBox)
+
         val addrRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, px(16), 0, 0)
+            setPadding(0, px(4), 0, 0)
         }
         hostEdit = EditText(this).apply {
             hint = "Home address, e.g. 192.168.1.20"
@@ -91,7 +123,7 @@ class MainActivity : Activity() {
         }
         addrRow.addView(hostEdit, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         addrRow.addView(portEdit, LinearLayout.LayoutParams(px(84), ViewGroup.LayoutParams.WRAP_CONTENT))
-        root.addView(addrRow)
+        pcBox.addView(addrRow)
 
         remoteEdit = EditText(this).apply {
             hint = "Away address (Tailscale, 100.x.x.x): fills in automatically"
@@ -99,7 +131,7 @@ class MainActivity : Activity() {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             setText(store.remoteHost)
         }
-        root.addView(remoteEdit)
+        pcBox.addView(remoteEdit)
 
         codeEdit = EditText(this).apply {
             hint = "Pairing code (shown on your PC)"
@@ -108,7 +140,7 @@ class MainActivity : Activity() {
                 InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
             setText(store.pairingCode)
         }
-        root.addView(codeEdit)
+        pcBox.addView(codeEdit)
 
         val findRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -129,13 +161,43 @@ class MainActivity : Activity() {
             text = "Start the companion on your PC, then tap Find PC."
         }
         findRow.addView(findStatus, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        root.addView(findRow)
+        pcBox.addView(findRow)
 
         awayStatus = TextView(this).apply {
             textSize = 13f
             setPadding(px(4), px(6), 0, 0)
         }
-        root.addView(awayStatus)
+        pcBox.addView(awayStatus)
+
+        // ---- phone mode (Shizuku)
+        phoneBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, px(4), 0, 0) }
+        shizukuStatus = TextView(this).apply { textSize = 13f; setPadding(px(4), px(4), 0, px(4)) }
+        phoneBox.addView(shizukuStatus)
+        shizukuButton = Button(this).apply { setOnClickListener { onShizukuButton() } }
+        phoneBox.addView(shizukuButton, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        phoneBox.addView(TextView(this).apply {
+            text = "Mouse movement"
+            textSize = 13f
+            setTextColor(0xFF80CBC4.toInt())
+            setPadding(px(4), px(8), 0, 0)
+        })
+        phoneBox.addView(android.widget.Spinner(this).apply {
+            adapter = ArrayAdapter(context, android.R.layout.simple_spinner_item, listOf(
+                "Auto: game mouse when Parsec locks the cursor, pointer otherwise",
+                "Always game mouse (relative)",
+                "Always visible pointer")).apply {
+                setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            }
+            setSelection(store.mouseMode.coerceIn(0, 2), false)
+            onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                    store.mouseMode = pos
+                }
+                override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+            }
+        })
+        root.addView(phoneBox)
 
         overlayCheck = CheckBox(this).apply {
             text = "Parsec mode: show controls on top of Parsec"
@@ -169,7 +231,7 @@ class MainActivity : Activity() {
 
         list = ListView(this)
         list.setOnItemClickListener { _, _, pos, _ ->
-            if (overlayCheck.isChecked) playOverlay(layouts[pos]) else play(layouts[pos], edit = false)
+            if (store.phoneMode || overlayCheck.isChecked) playOverlay(layouts[pos]) else play(layouts[pos], edit = false)
         }
         list.setOnItemLongClickListener { _, _, pos, _ -> layoutMenu(layouts[pos]); true }
         root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -183,10 +245,56 @@ class MainActivity : Activity() {
         })
 
         setContentView(root)
+        Shizuku.addBinderReceivedListenerSticky(shizukuChanged)
+        Shizuku.addBinderDeadListener(shizukuGone)
+        updateModeUi()
+    }
+
+    override fun onDestroy() {
+        Shizuku.removeBinderReceivedListener(shizukuChanged)
+        Shizuku.removeBinderDeadListener(shizukuGone)
+        super.onDestroy()
+    }
+
+    /** Shows the settings for the chosen output and refreshes the Shizuku status. */
+    private fun updateModeUi() {
+        val phone = store.phoneMode
+        pcBox.visibility = if (phone) View.GONE else View.VISIBLE
+        phoneBox.visibility = if (phone) View.VISIBLE else View.GONE
+        overlayCheck.text = if (phone) "Open Parsec automatically when I start a layout"
+            else "Parsec mode: show controls on top of Parsec"
+        if (!phone) return
+        val (msg, button, good) = when (LocalInjector.setupState(this)) {
+            LocalInjector.Setup.NOT_INSTALLED -> Triple(
+                "Shizuku isn't installed. It's a free app that lets PadForge send key presses and mouse " +
+                    "input to other apps (Android doesn't allow that otherwise).", "Get Shizuku", false)
+            LocalInjector.Setup.NOT_RUNNING -> Triple(
+                "Shizuku is installed but not running. Open it and start it with \"Wireless debugging\" " +
+                    "(needed again after every phone restart).", "Open Shizuku", false)
+            LocalInjector.Setup.OLD_VERSION -> Triple("Shizuku is too old. Update it from the Play Store.",
+                "Update Shizuku", false)
+            LocalInjector.Setup.NEEDS_PERMISSION -> Triple(
+                "Shizuku is running. Allow PadForge to use it.", "Allow PadForge", false)
+            LocalInjector.Setup.READY -> Triple(
+                "Ready: tap a layout to put it on top of Parsec. Key presses and mouse go into Parsec " +
+                    "like a real keyboard and mouse. No PC software needed.", "Open Shizuku", true)
+        }
+        shizukuStatus.text = msg
+        shizukuStatus.setTextColor(if (good) 0xFF81C784.toInt() else 0xFFFFB74D.toInt())
+        shizukuButton.text = button
+    }
+
+    private fun onShizukuButton() {
+        if (LocalInjector.setupState(this) == LocalInjector.Setup.NEEDS_PERMISSION) {
+            LocalInjector.ensurePermission { runOnUiThread { updateModeUi() } }
+        } else {
+            LocalInjector.openShizuku(this)
+        }
     }
 
     override fun onResume() {
         super.onResume()
+        updateModeUi()
         // The overlay may have learned the Tailscale address while we were in the background.
         if (store.remoteHost.isNotEmpty() && remoteEdit.text.isBlank()) remoteEdit.setText(store.remoteHost)
         updateAwayStatus()
@@ -247,6 +355,7 @@ class MainActivity : Activity() {
 
     private fun play(l: Layout, edit: Boolean) {
         saveAddress()
+        if (!edit && store.phoneMode) { playOverlay(l); return }
         if (!edit && !readyToConnect()) return
         startActivity(Intent(this, PadActivity::class.java)
             .putExtra(PadActivity.EXTRA_LAYOUT, l.id)
@@ -255,7 +364,8 @@ class MainActivity : Activity() {
 
     /** Starts the floating controls and switches to Parsec. */
     private fun playOverlay(l: Layout) {
-        if (!readyToConnect()) return
+        saveAddress()
+        if (!store.phoneMode && !readyToConnect()) return
         if (!OverlayService.canDraw(this)) {
             AlertDialog.Builder(this, Dialogs.theme())
                 .setTitle("Allow drawing over other apps")
@@ -279,8 +389,33 @@ class MainActivity : Activity() {
             getSharedPreferences("padforge", MODE_PRIVATE).edit().putBoolean("askedNotif", true).apply()
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
         }
+        if (store.phoneMode) {
+            when (LocalInjector.setupState(this)) {
+                LocalInjector.Setup.READY -> {}
+                LocalInjector.Setup.NEEDS_PERMISSION -> {
+                    LocalInjector.ensurePermission { ok ->
+                        runOnUiThread {
+                            updateModeUi()
+                            if (ok) launchOverlay(l)
+                            else Toast.makeText(this, "Phone mode needs Shizuku permission", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                    return
+                }
+                else -> {
+                    updateModeUi()
+                    Toast.makeText(this, shizukuStatus.text, Toast.LENGTH_LONG).show()
+                    return
+                }
+            }
+        }
+        launchOverlay(l)
+    }
+
+    private fun launchOverlay(l: Layout) {
         OverlayService.start(this, l.id)
-        val parsec = packageManager.getLaunchIntentForPackage(OverlayService.PARSEC_PACKAGE)
+        val parsec = if (store.phoneMode && !overlayCheck.isChecked) null
+            else packageManager.getLaunchIntentForPackage(OverlayService.PARSEC_PACKAGE)
         if (parsec != null) {
             startActivity(parsec)
         } else {

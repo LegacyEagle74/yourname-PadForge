@@ -63,6 +63,42 @@ Requires Android 7.0 or newer.
 - Long-press a layout on the home screen to rename, duplicate, delete or **share** it as text; use
   **Import** to paste one back in (handy for moving layouts between phones).
 
+## Phone-only mode (no PC software)
+
+PadForge can also send its keyboard and mouse input **straight into the app underneath the overlay on your
+phone** (for example Parsec, which passes it on to your PC like a real keyboard and mouse). Nothing needs
+to be installed on the PC, and it works anywhere Parsec does.
+
+Android doesn't let ordinary apps type or move the mouse in other apps, so this mode uses
+**[Shizuku](https://shizuku.rikka.app/)**, a free app that grants that permission without rooting the phone.
+
+### Setup
+
+1. Install **Shizuku** from the Play Store.
+2. Turn on **Developer options** (Settings → About phone → tap *Build number* 7 times), then in Shizuku
+   follow *Start via Wireless debugging* (pair once, then tap *Start*). This needs Wi-Fi to start, but not
+   afterwards. **Start Shizuku again after every phone restart.** (Rooted phones can use *Start (root)*.)
+3. In PadForge choose **Send input to → This phone**. The status line walks you through anything missing;
+   tap **Allow PadForge** when Shizuku asks.
+4. Tap a layout. It appears on top of Parsec (tick *Open Parsec automatically* to launch it for you), and
+   every button press goes into Parsec as a key press, mouse click or mouse movement.
+
+### Mouse movement
+
+- **Auto** (default): PadForge watches whether Parsec has locked the mouse (games that hide the cursor)
+  and sends game-style relative movement then, and a normal visible pointer otherwise.
+- **Always game mouse** / **Always visible pointer** force one or the other if Auto guesses wrong.
+
+### Limits in phone mode
+
+- F13–F24, volume and media keys can't be sent (Android has no code for the first, and the phone itself
+  would act on the others). Mouse back/forward buttons aren't sent, because Android treats them as *Back*.
+- Controller buttons and sticks are sent as an Android gamepad, which is **experimental**: many apps,
+  Parsec included, only accept real controllers. For controller layouts, PC mode is the reliable option.
+- Some key combinations are grabbed by Android before Parsec sees them (for example Alt+Tab or the
+  Windows key on some phones).
+- Shizuku stops when the phone restarts; PadForge's status shows *Shizuku isn't running* until you start it again.
+
 ## Playing away from home with Parsec
 
 Parsec streams your PC's screen to your phone. PadForge's controls float on top of the Parsec app and
