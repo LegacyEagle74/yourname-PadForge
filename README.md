@@ -81,18 +81,26 @@ PadForge connection itself isn't encrypted.
 
 ### One-time setup (at home)
 
-1. **Tailscale:** install it on the PC and the phone and sign in to the same account on both.
-2. **PC:** in the `pc-companion` folder, double-click
-   - **`setup_firewall.bat`**: lets PadForge in from your home network and Tailscale only.
-   - **`install_autostart.bat`**: runs the companion hidden, as administrator, every time you sign in
-     to Windows, so it's already running when you're away. It prints your pairing code.
-     (`remove_autostart.bat` undoes it; output goes to `padforge.log`.)
-3. **Phone:** in PadForge, set the address to your PC's **Tailscale address** (starts with `100.`;
-   it's shown in the Tailscale app and in the companion window labelled *Tailscale*), port `47800`,
-   and the pairing code. This address works both at home and away.
+1. **Tailscale:** install it on the PC and the phone, sign in to the **same account** on both, and leave it
+   switched on. The companion window shows a `100.x.y.z` address labelled *Tailscale* once it's working; if it
+   says *Tailscale isn't running on this PC*, fix that first.
+2. **PC:** in the `pc-companion` folder (unzip updates over the old folder so your pairing code is kept),
+   double-click **`install_autostart.bat`**. It opens the PadForge ports in Windows Firewall for your home
+   network and Tailscale only, removes any rule Windows made that blocks Python, and runs the companion
+   hidden, as administrator, every time you sign in. It prints your pairing code.
+   Run it again after updating the companion so the background copy restarts with the new version.
+   (`remove_autostart.bat` undoes it; output goes to `padforge.log`. If you'd rather start the companion
+   by hand, run `setup_firewall.bat` once instead.)
+3. **Phone, still at home:** enter the home address (or tap **Find PC**) and the pairing code, then tap
+   **Test**. PadForge connects and **learns your PC's Tailscale address automatically**: the
+   *Away address* field fills in and the line below it turns green: *Away from home: ready*.
 4. Tick **Parsec mode** and tap a layout. The first time, Android asks you to allow
    **Display over other apps** for PadForge; turn it on, come back and tap the layout again.
    PadForge starts the overlay and opens Parsec.
+
+Away from home PadForge tries your home address first and then the Tailscale one, so you never have to
+switch anything; the status says *via Tailscale* when that's the route in use. If it can't connect, the
+message says what's wrong (for example *Turn on Tailscale on this phone*).
 
 ### While playing
 

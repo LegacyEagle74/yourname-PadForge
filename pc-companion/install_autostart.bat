@@ -19,12 +19,17 @@ if not defined PYW (
   echo Installing vgamepad for controller support...
   py -3 -m pip install -r requirements.txt 2>nul || python -m pip install -r requirements.txt
 )
+rem The hidden copy runs as pythonw.exe, which Windows Firewall treats as a separate program,
+rem so open the PadForge ports by rule instead of relying on a firewall prompt.
+call "%~dp0setup_firewall.bat" nopause
+schtasks /end /tn "PadForge" >nul 2>&1
 schtasks /create /f /tn "PadForge" /sc onlogon /rl highest /tr "\"%PYW%\" \"%~dp0padforge_server.py\""
 if errorlevel 1 (
   echo Could not create the scheduled task.
   pause
   exit /b 1
 )
+powershell -NoProfile -Command "$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0; Set-ScheduledTask -TaskName 'PadForge' -Settings $s | Out-Null"
 schtasks /run /tn "PadForge" >nul
 echo.
 echo PadForge now starts automatically when you sign in to Windows (it's running now too).

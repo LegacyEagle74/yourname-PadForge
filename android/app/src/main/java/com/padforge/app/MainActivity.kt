@@ -32,6 +32,9 @@ class MainActivity : Activity() {
     private lateinit var hostEdit: EditText
     private lateinit var portEdit: EditText
     private lateinit var codeEdit: EditText
+    private lateinit var remoteEdit: EditText
+    private lateinit var awayStatus: TextView
+    private val testListener: () -> Unit = { onTestUpdate() }
     private lateinit var overlayCheck: CheckBox
     private lateinit var findStatus: TextView
     private lateinit var list: ListView
@@ -75,7 +78,7 @@ class MainActivity : Activity() {
             setPadding(0, px(16), 0, 0)
         }
         hostEdit = EditText(this).apply {
-            hint = "PC address, e.g. 192.168.1.20"
+            hint = "Home address, e.g. 192.168.1.20"
             isSingleLine = true
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             setText(store.host)
@@ -89,6 +92,14 @@ class MainActivity : Activity() {
         addrRow.addView(hostEdit, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         addrRow.addView(portEdit, LinearLayout.LayoutParams(px(84), ViewGroup.LayoutParams.WRAP_CONTENT))
         root.addView(addrRow)
+
+        remoteEdit = EditText(this).apply {
+            hint = "Away address (Tailscale, 100.x.x.x): fills in automatically"
+            isSingleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            setText(store.remoteHost)
+        }
+        root.addView(remoteEdit)
 
         codeEdit = EditText(this).apply {
             hint = "Pairing code (shown on your PC)"
@@ -107,6 +118,10 @@ class MainActivity : Activity() {
             text = "Find PC"
             setOnClickListener { findPc() }
         })
+        findRow.addView(Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+            text = "Test"
+            setOnClickListener { testConnection() }
+        })
         findStatus = TextView(this).apply {
             textSize = 13f
             setTextColor(0x99FFFFFF.toInt())
@@ -115,6 +130,12 @@ class MainActivity : Activity() {
         }
         findRow.addView(findStatus, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(findRow)
+
+        awayStatus = TextView(this).apply {
+            textSize = 13f
+            setPadding(px(4), px(6), 0, 0)
+        }
+        root.addView(awayStatus)
 
         overlayCheck = CheckBox(this).apply {
             text = "Parsec mode: show controls on top of Parsec"
@@ -166,10 +187,14 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        // The overlay may have learned the Tailscale address while we were in the background.
+        if (store.remoteHost.isNotEmpty() && remoteEdit.text.isBlank()) remoteEdit.setText(store.remoteHost)
+        updateAwayStatus()
         refresh()
     }
 
     override fun onPause() {
+        stopTest()
         saveAddress()
         super.onPause()
     }
@@ -178,6 +203,8 @@ class MainActivity : Activity() {
         store.host = hostEdit.text.toString()
         store.port = portEdit.text.toString().toIntOrNull()?.takeIf { it in 1..65535 } ?: 47800
         store.pairingCode = codeEdit.text.toString()
+        store.remoteHost = remoteEdit.text.toString()
+        updateAwayStatus()
     }
 
     private fun refresh() {
@@ -284,8 +311,69 @@ class MainActivity : Activity() {
     private fun pickFound(f: Connection.Found) {
         hostEdit.setText(f.address)
         portEdit.setText(f.port.toString())
+        if (f.tailscale.isNotEmpty()) remoteEdit.setText(f.tailscale)
         saveAddress()
-        findStatus.text = "Found ${f.name}"
+        findStatus.text = "Found ${f.name}" + if (f.tailscale.isEmpty()) " (no Tailscale on that PC yet)" else ""
+    }
+
+    /** Shows whether playing away from home is set up, and what's missing if not. */
+    private fun updateAwayStatus() {
+        val remote = store.remoteHost
+        val (msg, color) = when {
+            remote.isEmpty() -> "Away from home: not set up. Install Tailscale on your PC and this phone, " +
+                "update the PC companion, then tap Test here at home." to 0xFFFFB74D.toInt()
+            !Connection.isTailscale(remote) -> "Away from home: \"$remote\" isn't a Tailscale address " +
+                "(they start with 100.)." to 0xFFFFB74D.toInt()
+            !Connection.phoneOnTailscale() -> "Away from home: ready ($remote), but Tailscale is off on this " +
+                "phone. Turn it on before you leave." to 0xFFFFB74D.toInt()
+            else -> "Away from home: ready ($remote via Tailscale)" to 0xFF81C784.toInt()
+        }
+        awayStatus.text = msg
+        awayStatus.setTextColor(color)
+    }
+
+    /** Connects with the saved settings and reports the result (also learns the Tailscale address). */
+    private fun testConnection() {
+        if (!readyToConnect()) return
+        if (OverlayService.running) {
+            findStatus.text = "Stop the overlay first (long-press its floating button)."
+            return
+        }
+        findStatus.text = "Testing…"
+        Connection.listener = testListener
+        Connection.start(store)
+        findStatus.postDelayed({
+            if (Connection.listener === testListener && Connection.state != Connection.State.CONNECTED) {
+                findStatus.text = Connection.statusText()
+                stopTest()
+            }
+        }, 15000)
+    }
+
+    private fun onTestUpdate() {
+        when (Connection.state) {
+            Connection.State.CONNECTED -> {
+                findStatus.text = "✓ " + Connection.statusText()
+                if (store.remoteHost.isNotEmpty() && remoteEdit.text.toString() != store.remoteHost) {
+                    remoteEdit.setText(store.remoteHost)
+                }
+                updateAwayStatus()
+                // Keep it open long enough to show latency, then hang up.
+                findStatus.postDelayed({ if (Connection.listener === testListener) stopTest() }, 2500)
+            }
+            Connection.State.OFF -> if (Connection.lastError.isNotEmpty()) {
+                findStatus.text = Connection.lastError
+                stopTest()
+            }
+            Connection.State.CONNECTING -> if (Connection.lastError.isNotEmpty()) findStatus.text = Connection.lastError
+        }
+    }
+
+    private fun stopTest() {
+        if (Connection.listener === testListener) {
+            Connection.listener = null
+            Connection.stop()
+        }
     }
 
     private fun newLayout() {

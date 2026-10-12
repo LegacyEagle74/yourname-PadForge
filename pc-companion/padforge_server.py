@@ -470,7 +470,9 @@ class Session(threading.Thread):
                 self.authed = True
                 self.log("paired")
             has_pad = 1 if self.pad_factory is not None else 0
-            self.reply("WELCOME %d %s %d" % (PROTOCOL_VERSION, socket.gethostname().replace(" ", "_"), has_pad))
+            ts = tailscale_ip()
+            self.reply("WELCOME %d %s %d%s" % (PROTOCOL_VERSION, socket.gethostname().replace(" ", "_"), has_pad,
+                                                " ts=" + ts if ts else ""))
         elif not self.authed:
             raise ValueError("not paired yet")
         elif cmd == "K":
@@ -527,7 +529,7 @@ def discovery_loop(tcp_port, stop):
         except OSError:
             continue
         if data.strip() == b"PADFORGE_DISCOVER":
-            s.sendto(("PADFORGE_SERVER %d %s" % (tcp_port, name)).encode(), addr)
+            s.sendto(("PADFORGE_SERVER %d %s %s" % (tcp_port, name, tailscale_ip() or "-")).encode(), addr)
 
 
 def describe_ip(ip):
@@ -537,6 +539,28 @@ def describe_ip(ip):
     except ValueError:
         pass
     return "home network"
+
+
+def tailscale_ip():
+    """This PC's Tailscale address (100.64.0.0/10), or None if Tailscale isn't running."""
+    candidates = []
+    try:
+        # Tailscale routes its own 100.100.100.100 service through the tailnet interface, so
+        # "which local address would talk to it" is the Tailscale address. No packet is sent.
+        u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        u.connect(("100.100.100.100", 53))
+        candidates.append(u.getsockname()[0])
+        u.close()
+    except OSError:
+        pass
+    candidates += local_ips()
+    for ip in candidates:
+        try:
+            if ipaddress.ip_address(ip) in TAILSCALE_NET:
+                return ip
+        except ValueError:
+            pass
+    return None
 
 
 def local_ips():
@@ -605,8 +629,12 @@ def main():
     print("  gamepad        : %s" % ("virtual Xbox 360 controller" if pad_factory else "off"))
     print("  listening on   : port %d" % args.port)
     print("  pairing code   : %s" % (format_code(code) if code else "OFF (any phone can connect)"))
-    for ip in local_ips():
+    ts = tailscale_ip()
+    for ip in sorted(set(local_ips()) | ({ts} if ts else set())):
         print("  PC address     : %-15s (%s)" % (ip, describe_ip(ip)))
+    if not ts:
+        print("  !! Tailscale isn't running on this PC, so PadForge only works on your home network.")
+        print("     To play away from home, install Tailscale (tailscale.com) here and on your phone.")
     print("In the app: tap 'Find PC' at home, or type an address above, then enter the pairing code.")
     print("Press Ctrl+C to quit.\n")
 

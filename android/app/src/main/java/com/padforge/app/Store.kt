@@ -17,6 +17,14 @@ class Store(private val context: Context) {
         get() = prefs.getInt("port", 47800)
         set(v) = prefs.edit().putInt("port", v).apply()
 
+    /**
+     * The PC's Tailscale address (100.x.y.z), used when the home address can't be reached.
+     * Learned automatically from the companion; can also be typed in.
+     */
+    var remoteHost: String
+        get() = prefs.getString("remoteHost", "") ?: ""
+        set(v) = prefs.edit().putString("remoteHost", v.trim()).apply()
+
     /** Pairing code shown by the PC companion, stored without dashes. */
     var pairingCode: String
         get() = prefs.getString("code", "") ?: ""
